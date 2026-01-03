@@ -3,6 +3,9 @@ from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 import execjs  # 需要安装：pip install PyExecJS
 
+# 获取脚本所在目录的绝对路径
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 def fetch_html(url):
     """获取网页HTML内容，增加重试机制"""
     headers = {
@@ -61,10 +64,11 @@ def download_js_decoder():
         return None
     
     # 保存到本地文件
-    with open("yudou_decode.js", "w", encoding="utf-8") as f:
+    js_file_path = os.path.join(SCRIPT_DIR, "yudou_decode.js")
+    with open(js_file_path, "w", encoding="utf-8") as f:
         f.write(js_content)
     
-    print("  JS解码器已下载到本地")
+    print(f"  JS解码器已下载到: {js_file_path}")
     return js_content
 
 def load_js_decoder():
@@ -72,8 +76,9 @@ def load_js_decoder():
     # 设置execjs使用utf-8编码，避免Windows上的gbk问题
     os.environ['EXECJS_ENCODING'] = 'utf-8'
     
-    if os.path.exists("yudou_decode.js"):
-        with open("yudou_decode.js", "r", encoding="utf-8") as f:
+    js_file_path = os.path.join(SCRIPT_DIR, "yudou_decode.js")
+    if os.path.exists(js_file_path):
+        with open(js_file_path, "r", encoding="utf-8") as f:
             js_content = f.read()
     else:
         js_content = download_js_decoder()
@@ -385,12 +390,15 @@ def decode_with_js(encrypted_content, js_ctx):
 def save_to_file(content, filename):
     """将内容保存到文件"""
     try:
-        with open(filename, 'w', encoding='utf-8') as f:
+        # 拼接脚本目录和文件名，确保文件保存在脚本所在目录
+        file_path = os.path.join(SCRIPT_DIR, filename)
+        with open(file_path, 'w', encoding='utf-8') as f:
             f.write(content)
-        print(f"  成功！文件已保存为: {filename}")
+        print(f"  成功！文件已保存为: {file_path}")
         return True
     except Exception as e:
-        print(f"  错误：无法保存文件 {filename}。原因：{e}")
+        file_path = os.path.join(SCRIPT_DIR, filename)
+        print(f"  错误：无法保存文件 {file_path}。原因：{e}")
         return False
 
 def main():
@@ -434,15 +442,16 @@ def main():
         print("错误：无法访问节点文件")
         sys.exit(1)
     
-    # 直接保存txt文件到本地，不进行任何分析
+    # 直接保存txt文件到脚本所在目录
     filename = f"nodes_{today}.txt"
+    file_path = os.path.join(SCRIPT_DIR, filename)
     try:
-        with open(filename, 'w', encoding='utf-8') as f:
+        with open(file_path, 'w', encoding='utf-8') as f:
             f.write(txt_content)
-        print(f"爬取完成！文件已保存到 {filename}")
+        print(f"爬取完成！文件已保存到 {file_path}")
         print(f"文件大小: {len(txt_content)} 字符")
     except Exception as e:
-        print(f"错误：无法保存文件。原因：{e}")
+        print(f"错误：无法保存文件 {file_path}。原因：{e}")
         sys.exit(1)
 
 if __name__ == "__main__":
