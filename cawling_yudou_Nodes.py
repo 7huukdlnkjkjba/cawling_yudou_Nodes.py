@@ -1,7 +1,6 @@
 import requests, re, json, sys, time, subprocess, os
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
-import execjs  # 需要安装：pip install PyExecJS
 
 # 获取脚本所在目录的绝对路径
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -52,47 +51,7 @@ def get_yesterday_date_str():
     yesterday = datetime.now() - timedelta(days=1)
     return yesterday.strftime("%Y年%m月%d日")
 
-def download_js_decoder():
-    """下载 JavaScript 解码器"""
-    js_url = "https://raw.githubusercontent.com/7huukdlnkjkjba/yudou_decode/main/yudou_decode.js"
-    
-    print(f"步骤1：下载JS解码器...")
-    js_content = requests.get(js_url, timeout=15).text
-    
-    if not js_content:
-        print("错误：无法下载JS解码器")
-        return None
-    
-    # 保存到本地文件
-    js_file_path = os.path.join(SCRIPT_DIR, "yudou_decode.js")
-    with open(js_file_path, "w", encoding="utf-8") as f:
-        f.write(js_content)
-    
-    print(f"  JS解码器已下载到: {js_file_path}")
-    return js_content
 
-def load_js_decoder():
-    """加载JS解码器"""
-    # 设置execjs使用utf-8编码，避免Windows上的gbk问题
-    os.environ['EXECJS_ENCODING'] = 'utf-8'
-    
-    js_file_path = os.path.join(SCRIPT_DIR, "yudou_decode.js")
-    if os.path.exists(js_file_path):
-        with open(js_file_path, "r", encoding="utf-8") as f:
-            js_content = f.read()
-    else:
-        js_content = download_js_decoder()
-    
-    if not js_content:
-        return None
-    
-    try:
-        # 创建JS上下文
-        ctx = execjs.compile(js_content)
-        return ctx
-    except Exception as e:
-        print(f"错误：无法加载JS解码器。原因：{e}")
-        return None
 
 def get_latest_article_link(html):
     """从首页HTML中提取最新文章的链接"""
@@ -249,143 +208,44 @@ def extract_encrypted_content(txt_html):
     
     return None
 
-# 玉豆分享常见密码列表 - 优先尝试
-COMMON_PASSWORDS = [
-    "0000", "0123", "1111", "1112", "1122", "1133", "1144", "1155", "1166", "1177",
-    "1188", "1199", "1222", "1234", "2211", "2222", "2233", "2244", "2255", "2266",
-    "2277", "2288", "2299", "2333", "2345", "3311", "3322", "3333", "3344", "3355",
-    "3366", "3377", "3388", "3399", "3444", "3456", "4321", "4411", "4422", "4433",
-    "4444", "4455", "4466", "4477", "4488", "4499", "4555", "4567", "5511", "5522",
-    "5533", "5544", "5555", "5566", "5577", "5588", "5599", "5666", "5678", "6611",
-    "6622", "6633", "6644", "6655", "6666", "6677", "6688", "6699", "6777", "6789",
-    "7711", "7722", "7733", "7744", "7755", "7766", "7777", "7788", "7799", "7888",
-    "8811", "8822", "8833", "8844", "8855", "8866", "8877", "8888", "8899", "8999",
-    "9900", "9911", "9922", "9933", "9944", "9955", "9966", "9977", "9988", "9999"
-]
 
 
-def crack_yudou_password(secret_data, html_content):
-    """玉豆分享密码破解函数"""
-    import base64
+def extract_password_from_article(article_html):
+    """从文章页面中提取密码"""
+    if not article_html:
+        return None
     
-    # 尝试常用密码
-    for pwd in COMMON_PASSWORDS:
-        try:
-            # 将密码转为Base64，与secret_data比较
-            encoded_pwd = base64.b64encode(pwd.encode()).decode()
-            if encoded_pwd == secret_data:
-                return pwd
-        except:
-            continue
+    soup = BeautifulSoup(article_html, 'html.parser')
     
-    # 暴力破解：尝试0000-9999
-    for i in range(10000):
-        pwd = str(i).zfill(4)
-        try:
-            encoded_pwd = base64.b64encode(pwd.encode()).decode()
-            if encoded_pwd == secret_data:
-                return pwd
-        except:
-            continue
+    # 方法1：查找包含"密码"的文本
+    all_text = soup.get_text()
+    
+    # 正则表达式匹配密码：通常是4位数字
+    password_patterns = [
+        r'密码[:：]\s*(\d{4})',
+        r'今日密码[:：]\s*(\d{4})',
+        r'提取码[:：]\s*(\d{4})',
+        r'key[:：]\s*(\d{4})',
+        r'KEY[:：]\s*(\d{4})',
+        r'密码\s*=\s*(\d{4})',
+        r'提取码\s*=\s*(\d{4})'
+    ]
+    
+    for pattern in password_patterns:
+        matches = re.findall(pattern, all_text)
+        if matches:
+            return matches[0]
+    
+    # 方法2：查找包含密码的HTML元素
+    for tag in soup.find_all(['div', 'span', 'p', 'strong']):
+        text = tag.get_text().strip()
+        if '密码' in text or '提取码' in text or 'KEY' in text or 'key' in text:
+            matches = re.findall(r'\d{4}', text)
+            if matches:
+                return matches[0]
     
     return None
 
-
-def decode_with_js(encrypted_content, js_ctx):
-    """使用JS解码器解密内容"""
-    if not encrypted_content:
-        return encrypted_content
-    
-    # 检查是否为玉豆分享加密格式
-    if encrypted_content.startswith("YUDOU_ENCRYPT:"):
-        try:
-            # 解析格式：YUDOU_ENCRYPT:secret_data:html_content
-            parts = encrypted_content.split(":", 2)
-            if len(parts) != 3:
-                return encrypted_content
-            
-            secret_data = parts[1]
-            html_content = parts[2]
-            
-            # 破解密码
-            password = crack_yudou_password(secret_data, html_content)
-            if password:
-                # 尝试直接从HTML中提取隐藏内容
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(html_content, 'html.parser')
-                # 查找隐藏内容
-                hidden_content = soup.select_one('.cl-hidden-content')
-                if hidden_content:
-                    content = hidden_content.get_text().strip()
-                    if content:
-                        return content
-                # 或者尝试查找所有可能的内容
-                all_content = soup.get_text()
-                # 过滤掉可能的HTML标签文本
-                filtered_content = '\n'.join([line.strip() for line in all_content.split('\n') 
-                                            if line.strip() and not any(keyword in line.lower() 
-                                            for keyword in ['html', 'body', 'div', 'span', 'p', 'script', 'style', 'head', 'title'])])
-                return filtered_content
-            else:
-                return encrypted_content
-        except:
-            return encrypted_content
-    
-    # 如果没有JS上下文，直接返回原始内容
-    if not js_ctx:
-        return encrypted_content
-    
-    try:
-        # 尝试1：简单的Base64解码
-        try:
-            import base64
-            # 清理可能的空白字符
-            clean_content = encrypted_content.replace('\n', '').replace('\r', '').replace(' ', '')
-            # 确保内容长度是4的倍数
-            while len(clean_content) % 4 != 0:
-                clean_content += '='
-            # 尝试解码
-            decoded = base64.b64decode(clean_content).decode('utf-8', errors='ignore')
-            if decoded and decoded != clean_content:
-                return decoded
-        except:
-            pass
-        
-        # 尝试2：URL安全的Base64解码
-        try:
-            import base64
-            clean_content = encrypted_content.replace('\n', '').replace('\r', '').replace(' ', '')
-            # URL安全Base64替换
-            clean_content = clean_content.replace('-', '+').replace('_', '/')
-            while len(clean_content) % 4 != 0:
-                clean_content += '='
-            decoded = base64.b64decode(clean_content).decode('utf-8', errors='ignore')
-            if decoded and decoded != clean_content:
-                return decoded
-        except:
-            pass
-        
-        # 尝试3：简单的字符替换（可能的凯撒密码）
-        try:
-            # 简单的字符偏移解密
-            def caesar_decrypt(text, shift=3):
-                result = ""
-                for char in text:
-                    if char.isalpha():
-                        ascii_offset = 65 if char.isupper() else 97
-                        result += chr((ord(char) - ascii_offset - shift) % 26 + ascii_offset)
-                    else:
-                        result += char
-                return result
-            
-            decoded = caesar_decrypt(encrypted_content)
-            return decoded
-        except:
-            pass
-        
-        return encrypted_content
-    except:
-        return encrypted_content  # 返回原始内容
 
 def save_to_file(content, filename):
     """将内容保存到文件"""
@@ -400,6 +260,7 @@ def save_to_file(content, filename):
         file_path = os.path.join(SCRIPT_DIR, filename)
         print(f"  错误：无法保存文件 {file_path}。原因：{e}")
         return False
+
 
 def main():
     base_url = "https://www.yudou789.top/"
@@ -427,7 +288,14 @@ def main():
         print("错误：无法访问文章页面")
         sys.exit(1)
     
-    # 步骤4：查找加密文件链接
+    # 步骤4：从文章页面提取密码
+    password = extract_password_from_article(article_html)
+    if password:
+        print(f"✅ 今日密码：{password}")
+    else:
+        print("🔍 未在文章中找到密码，尝试其他方式...")
+    
+    # 步骤5：查找加密文件链接
     txt_url = find_encrypted_txt_link(article_html)
     
     if not txt_url:
@@ -448,11 +316,24 @@ def main():
     try:
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(txt_content)
-        print(f"爬取完成！文件已保存到 {file_path}")
-        print(f"文件大小: {len(txt_content)} 字符")
+        print(f"文件已保存到 {file_path}")
     except Exception as e:
         print(f"错误：无法保存文件 {file_path}。原因：{e}")
-        sys.exit(1)
+    
+    # 删除JS解码器
+    js_file_path = os.path.join(SCRIPT_DIR, "yudou_decode.js")
+    if os.path.exists(js_file_path):
+        try:
+            os.remove(js_file_path)
+            print(f"JS解码器已删除：{js_file_path}")
+        except Exception as e:
+            print(f"错误：无法删除JS解码器。原因：{e}")
+    
+    # 显示最终结果
+    print(f"爬取完成！")
+    if password:
+        print(f"📅 今日日期：{get_current_date_str()}")
+        print(f"🔑 最终密码：{password}")
 
 if __name__ == "__main__":
     # 禁用SSL警告（有些网站证书可能有问题）
