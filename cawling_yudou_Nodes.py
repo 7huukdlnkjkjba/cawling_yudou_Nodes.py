@@ -1,4 +1,4 @@
-import requests, re, json, sys, time, subprocess, os
+import requests, re, json, sys, time, subprocess, os, random
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 
@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def fetch_html(url):
-    """获取网页HTML内容，增加重试机制"""
+    """获取网页HTML内容，增加重试机制和反爬延迟"""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -20,10 +20,12 @@ def fetch_html(url):
     max_retries = 3
     for retry in range(max_retries):
         try:
-            resp = requests.get(url, headers=headers, timeout=30, verify=False)
+            resp = requests.get(url, headers=headers, timeout=30)
             resp.raise_for_status()
             # 尝试多种编码，最后用UTF-8兜底
             resp.encoding = resp.apparent_encoding if resp.apparent_encoding else 'utf-8'
+            # 添加反爬延迟，模拟人类浏览行为
+            time.sleep(random.uniform(1, 3))
             return resp.text
         except requests.RequestException as e:
             if retry < max_retries - 1:
@@ -304,9 +306,23 @@ def extract_password_from_article(article_html):
     return None
 
 
+def validate_filename(filename):
+    """验证文件名安全性，防止路径遍历攻击"""
+    # 只允许文件名包含字母、数字、下划线和连字符
+    if not re.match(r'^[a-zA-Z0-9-_]+\.\w+$', filename):
+        return False
+    # 确保文件名不包含路径分隔符
+    if '/' in filename or '\\' in filename or '..' in filename:
+        return False
+    return True
+
 def save_to_file(content, filename):
     """将内容保存到文件"""
     try:
+        # 验证文件名安全性
+        if not validate_filename(filename):
+            print(f"  错误：文件名 {filename} 不安全")
+            return False
         # 拼接脚本目录和文件名，确保文件保存在脚本所在目录
         file_path = os.path.join(SCRIPT_DIR, filename)
         with open(file_path, 'w', encoding='utf-8') as f:
@@ -369,13 +385,17 @@ def main():
     
     # 直接保存txt文件到脚本所在目录
     filename = f"nodes_{today}.txt"
-    file_path = os.path.join(SCRIPT_DIR, filename)
-    try:
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(txt_content)
-        print(f"文件已保存到 {file_path}")
-    except Exception as e:
-        print(f"错误：无法保存文件 {file_path}。原因：{e}")
+    # 验证文件名安全性
+    if validate_filename(filename):
+        file_path = os.path.join(SCRIPT_DIR, filename)
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(txt_content)
+            print(f"文件已保存到 {file_path}")
+        except Exception as e:
+            print(f"错误：无法保存文件 {file_path}。原因：{e}")
+    else:
+        print(f"错误：文件名 {filename} 不安全")
     
     # 删除JS解码器
     js_file_path = os.path.join(SCRIPT_DIR, "yudou_decode.js")
@@ -393,7 +413,4 @@ def main():
         print(f"🔑 最终密码：{password}")
 
 if __name__ == "__main__":
-    # 禁用SSL警告（有些网站证书可能有问题）
-    requests.packages.urllib3.disable_warnings()
-    
     main()
