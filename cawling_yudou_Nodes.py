@@ -335,9 +335,22 @@ def save_to_file(content, filename):
         return False
 
 
+def extract_date_from_title(title):
+    """从文章标题中提取日期，格式：YYYYMMDD"""
+    # 匹配标题中的日期格式：2026年01月06日
+    pattern = r'(\d{4})年(\d{2})月(\d{2})日'
+    match = re.search(pattern, title)
+    if match:
+        year = match.group(1)
+        month = match.group(2)
+        day = match.group(3)
+        return f"{year}{month}{day}"
+    # 如果没找到，返回当前日期
+    return get_today_str()
+
+
 def main():
     base_url = "https://www.yudou789.top/"
-    today = get_today_str()
     
     print(f"开始爬取玉豆分享最新节点文件...")
     
@@ -354,6 +367,10 @@ def main():
         sys.exit(1)
     
     print(f"找到最新文章: {article_title}")
+    
+    # 从文章标题中提取日期
+    article_date = extract_date_from_title(article_title)
+    print(f"文章日期：{article_date}")
     
     # 步骤3：访问文章页面
     article_html = fetch_html(article_url)
@@ -383,8 +400,8 @@ def main():
         print("错误：无法访问节点文件")
         sys.exit(1)
     
-    # 直接保存txt文件到脚本所在目录
-    filename = f"nodes_{today}.txt"
+    # 使用文章日期命名文件
+    filename = f"nodes_{article_date}.txt"
     # 验证文件名安全性
     if validate_filename(filename):
         file_path = os.path.join(SCRIPT_DIR, filename)
@@ -409,7 +426,7 @@ def main():
     # 显示最终结果
     print(f"爬取完成！")
     if password:
-        print(f"📅 今日日期：{get_current_date_str()}")
+        print(f"📅 文章日期：{article_date}")
         print(f"🔑 最终密码：{password}")
 
 if __name__ == "__main__":
