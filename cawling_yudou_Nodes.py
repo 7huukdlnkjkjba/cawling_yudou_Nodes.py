@@ -158,22 +158,12 @@ def extract_encrypted_content(txt_html):
     # 否则是HTML页面，需要提取加密内容
     soup = BeautifulSoup(txt_html, 'html.parser')
     
-    # 玉豆分享特殊处理：查找带有data-secret属性的元素
-    wrapper = soup.find('.cl-noindent-wrapper')
-    if not wrapper:
-        wrapper = soup.select_one('[data-secret]')
-    
-    if wrapper:
-        secret_data = wrapper.get('data-secret')
-        if secret_data:
-            # 返回特殊格式，包含secret_data和HTML内容，用于后续破解
-            return f"YUDOU_ENCRYPT:{secret_data}:{txt_html}"
-    
     # 方法1：查找<textarea>标签
     textarea = soup.find('textarea')
     if textarea:
         content = textarea.get_text().strip()
         if content:
+            print("从textarea标签提取内容")
             return content
     
     # 方法2：查找<pre>标签
@@ -181,101 +171,32 @@ def extract_encrypted_content(txt_html):
     if pre:
         content = pre.get_text().strip()
         if content:
+            print("从pre标签提取内容")
             return content
     
-    # 方法3：查找<div>或<span>中可能包含的加密文本
-    for tag in soup.find_all(['div', 'span', 'p']):
-        content = tag.get_text().strip()
-        # 检查是否是Base64编码的文本特征
-        if (len(content) > 100 and 
-            re.match(r'^[A-Za-z0-9+/=]+$', content.replace('\n', '').replace('\r', ''))):
-            return content
-    
-    # 方法4：查找所有文本并尝试识别加密内容
+    # 方法3：查找所有文本并尝试识别加密内容
     all_text = soup.get_text()
     lines = all_text.split('\n')
     
     for line in lines:
         line = line.strip()
         if len(line) > 50 and not any(word in line.lower() for word in ['html', 'http', '<', '>', 'script']):
+            print("从文本中提取可能的加密内容")
             return line
     
-    # 方法5：在原始HTML中搜索Base64模式
-    pattern = r'[A-Za-z0-9+/=]{100,}'
-    matches = re.findall(pattern, txt_html)
-    
-    if matches:
-        # 返回最长的匹配项（最可能是加密内容）
-        return max(matches, key=len)
-    
+    print("无法提取加密内容")
     return None
 
 
 
 def extract_password_from_article(article_html):
-    """从文章页面中提取密码，优先从JS解码器中获取"""
+    """从文章页面中提取密码"""
     if not article_html:
         return None
     
-    import base64
-    
     soup = BeautifulSoup(article_html, 'html.parser')
     
-    # 方法1：优先查找带有data-secret属性的元素（Base64编码密码）
-    secret_elements = soup.select('[data-secret]')
-    for elem in secret_elements:
-        secret_data = elem.get('data-secret')
-        if secret_data:
-            try:
-                # 解码Base64
-                decoded = base64.b64decode(secret_data).decode('utf-8')
-                # 检查是否是4位数字密码
-                if re.match(r'^\d{4}$', decoded):
-                    return decoded
-            except Exception as e:
-                print(f"解码Base64密码失败: {e}")
-    
-    # 方法2：查找JS解码器中的密码映射
-    today = get_today_str()  # 格式：YYYYMMDD
-    
-    # 查找所有script标签
-    scripts = soup.find_all('script')
-    for script in scripts:
-        script_content = script.string
-        if script_content:
-            # 尝试匹配密码映射模式，例如：{"20260105":"2266"} 或类似格式
-            # 匹配各种可能的密码映射格式
-            patterns = [
-                # 匹配对象字面量：{"20260105":"2266", ...}
-                r'\{\s*["\'](\d{8})["\']\s*:\s*["\'](\d{4})["\']\s*(?:,|\})',
-                # 匹配数组格式：["20260105","2266"] 或 [["20260105","2266"]]
-                r'["\'](\d{8})["\']\s*,\s*["\'](\d{4})["\']',
-                # 匹配函数调用中的密码：getPassword("20260105") 或类似
-                rf'passwords?\s*[=:]?\s*\{{[^}}]*["\']{today}["\']\s*:\s*["\'](\d{{4}})["\']',
-                # 匹配直接赋值：var password = "2266" 或 const pwd = "2266"
-                r'[var|let|const]\s+\w*password\w*\s*=\s*["\'](\d{4})["\']'
-            ]
-            
-            for pattern in patterns:
-                matches = re.findall(pattern, script_content, re.IGNORECASE)
-                if matches:
-                    for match in matches:
-                        # 处理不同匹配结果格式
-                        if isinstance(match, tuple):
-                            # 如果是元组，检查第一个元素是否是今天的日期
-                            if len(match) == 2 and match[0] == today:
-                                return match[1]
-                            # 否则尝试返回第二个元素（密码）
-                            elif len(match) == 2:
-                                return match[1]
-                            # 如果只有一个元素，直接返回
-                            elif len(match) == 1:
-                                return match[0]
-                        else:
-                            # 字符串匹配，直接返回
-                            return match
-    
-    # 方法3：查找包含"密码"的文本（原逻辑）
+    # 方法1：查找包含"密码"的文本
     all_text = soup.get_text()
     
     # 正则表达式匹配密码：通常是4位数字
@@ -292,17 +213,19 @@ def extract_password_from_article(article_html):
     for pattern in password_patterns:
         matches = re.findall(pattern, all_text)
         if matches:
+            print(f"从文本中找到密码: {matches[0]}")
             return matches[0]
     
-    # 方法4：查找包含密码的HTML元素（原逻辑）
+    # 方法2：查找包含密码的HTML元素
     for tag in soup.find_all(['div', 'span', 'p', 'strong']):
         text = tag.get_text().strip()
         if '密码' in text or '提取码' in text or 'KEY' in text or 'key' in text:
             matches = re.findall(r'\d{4}', text)
             if matches:
+                print(f"从HTML元素中找到密码: {matches[0]}")
                 return matches[0]
     
-    # 方法5：如果以上都失败，返回空
+    # 方法3：如果以上都失败，返回空
     return None
 
 
@@ -354,80 +277,93 @@ def main():
     
     print(f"开始爬取玉豆分享最新节点文件...")
     
-    # 步骤1：获取网站首页
-    home_html = fetch_html(base_url)
-    if not home_html:
-        print("错误：无法访问目标网站")
+    try:
+        # 步骤1：获取网站首页
+        home_html = fetch_html(base_url)
+        if not home_html:
+            print("错误：无法访问目标网站")
+            sys.exit(1)
+        
+        # 步骤2：查找最新文章链接
+        article_url, article_title = get_latest_article_link(home_html)
+        if not article_url:
+            print("错误：无法找到最新文章链接")
+            sys.exit(1)
+        
+        print(f"找到最新文章: {article_title}")
+        
+        # 从文章标题中提取日期
+        article_date = extract_date_from_title(article_title)
+        print(f"文章日期：{article_date}")
+        
+        # 步骤3：访问文章页面
+        article_html = fetch_html(article_url)
+        if not article_html:
+            print("错误：无法访问文章页面")
+            sys.exit(1)
+        
+        # 步骤4：从文章页面提取密码
+        password = extract_password_from_article(article_html)
+        if password:
+            print(f"今日密码：{password}")
+        else:
+            print("未在文章中找到密码")
+        
+        # 步骤5：查找加密文件链接
+        txt_url = find_encrypted_txt_link(article_html)
+        
+        if not txt_url:
+            print("错误：无法找到加密文件链接")
+            sys.exit(1)
+        
+        print(f"找到节点文件链接: {txt_url}")
+        
+        # 步骤6：直接访问并保存txt文件内容
+        txt_content = fetch_html(txt_url)
+        if not txt_content:
+            print("错误：无法访问节点文件")
+            sys.exit(1)
+        
+        # 步骤7：提取加密内容
+        extracted_content = extract_encrypted_content(txt_content)
+        if extracted_content:
+            # 使用提取的内容
+            txt_content = extracted_content
+        
+        # 使用文章日期命名文件
+        filename = f"nodes_{article_date}.txt"
+        # 验证文件名安全性
+        if validate_filename(filename):
+            file_path = os.path.join(SCRIPT_DIR, filename)
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(txt_content)
+                print(f"文件已保存到 {file_path}")
+            except Exception as e:
+                print(f"错误：无法保存文件 {file_path}。原因：{e}")
+        else:
+            print(f"错误：文件名 {filename} 不安全")
+        
+        # 删除JS解码器
+        js_file_path = os.path.join(SCRIPT_DIR, "yudou_decode.js")
+        if os.path.exists(js_file_path):
+            try:
+                os.remove(js_file_path)
+                print(f"JS解码器已删除：{js_file_path}")
+            except Exception as e:
+                print(f"错误：无法删除JS解码器。原因：{e}")
+        
+        # 显示最终结果
+        print(f"\n爬取完成！")
+        if password:
+            print(f"文章日期：{article_date}")
+            print(f"最终密码：{password}")
+        print(f"节点文件：nodes_{article_date}.txt")
+    except Exception as e:
+        print(f"❌ 程序执行过程中发生错误：{e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
-    
-    # 步骤2：查找最新文章链接
-    article_url, article_title = get_latest_article_link(home_html)
-    if not article_url:
-        print("错误：无法找到最新文章链接")
-        sys.exit(1)
-    
-    print(f"找到最新文章: {article_title}")
-    
-    # 从文章标题中提取日期
-    article_date = extract_date_from_title(article_title)
-    print(f"文章日期：{article_date}")
-    
-    # 步骤3：访问文章页面
-    article_html = fetch_html(article_url)
-    if not article_html:
-        print("错误：无法访问文章页面")
-        sys.exit(1)
-    
-    # 步骤4：从文章页面提取密码
-    password = extract_password_from_article(article_html)
-    if password:
-        print(f"✅ 今日密码：{password}")
-    else:
-        print("🔍 未在文章中找到密码，尝试其他方式...")
-    
-    # 步骤5：查找加密文件链接
-    txt_url = find_encrypted_txt_link(article_html)
-    
-    if not txt_url:
-        print("错误：无法找到加密文件链接")
-        sys.exit(1)
-    
-    print(f"找到节点文件链接: {txt_url}")
-    
-    # 步骤5：直接访问并保存txt文件内容
-    txt_content = fetch_html(txt_url)
-    if not txt_content:
-        print("错误：无法访问节点文件")
-        sys.exit(1)
-    
-    # 使用文章日期命名文件
-    filename = f"nodes_{article_date}.txt"
-    # 验证文件名安全性
-    if validate_filename(filename):
-        file_path = os.path.join(SCRIPT_DIR, filename)
-        try:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(txt_content)
-            print(f"文件已保存到 {file_path}")
-        except Exception as e:
-            print(f"错误：无法保存文件 {file_path}。原因：{e}")
-    else:
-        print(f"错误：文件名 {filename} 不安全")
-    
-    # 删除JS解码器
-    js_file_path = os.path.join(SCRIPT_DIR, "yudou_decode.js")
-    if os.path.exists(js_file_path):
-        try:
-            os.remove(js_file_path)
-            print(f"JS解码器已删除：{js_file_path}")
-        except Exception as e:
-            print(f"错误：无法删除JS解码器。原因：{e}")
-    
-    # 显示最终结果
-    print(f"爬取完成！")
-    if password:
-        print(f"📅 文章日期：{article_date}")
-        print(f"🔑 最终密码：{password}")
 
 if __name__ == "__main__":
     main()
