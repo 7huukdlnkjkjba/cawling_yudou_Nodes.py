@@ -1,369 +1,192 @@
-import requests, re, json, sys, time, subprocess, os, random
+import requests, re, os, time, base64
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 
-# 获取脚本所在目录的绝对路径
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-
-def fetch_html(url):
-    """获取网页HTML内容，增加重试机制和反爬延迟"""
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Cache-Control': 'max-age=0',
-    }
-    
-    max_retries = 3
-    for retry in range(max_retries):
-        try:
-            resp = requests.get(url, headers=headers, timeout=30)
-            resp.raise_for_status()
-            # 尝试多种编码，最后用UTF-8兜底
-            resp.encoding = resp.apparent_encoding if resp.apparent_encoding else 'utf-8'
-            # 添加反爬延迟，模拟人类浏览行为
-            time.sleep(random.uniform(1, 3))
-            return resp.text
-        except requests.RequestException as e:
-            if retry < max_retries - 1:
-                print(f"警告：获取 {url} 失败，{retry+1}/{max_retries}，3秒后重试... 原因：{e}")
-                time.sleep(3)
-            else:
-                print(f"错误：无法获取 {url}。原因：{e}")
-                return None
+BASE_URL = "https://www.yudou789.top/"
 
 def get_today_str():
-    """返回今天的日期字符串，格式为 YYYYMMDD"""
     return datetime.now().strftime("%Y%m%d")
 
-def get_yesterday_str():
-    """返回昨天的日期字符串，格式为 YYYYMMDD"""
-    yesterday = datetime.now() - timedelta(days=1)
-    return yesterday.strftime("%Y%m%d")
-
 def get_current_date_str():
-    """返回今天的日期字符串，格式为 2026年01月02日"""
     return datetime.now().strftime("%Y年%m月%d日")
 
 def get_yesterday_date_str():
-    """返回昨天的日期字符串，格式为 2026年01月01日"""
-    yesterday = datetime.now() - timedelta(days=1)
-    return yesterday.strftime("%Y年%m月%d日")
+    return (datetime.now() - timedelta(days=1)).strftime("%Y年%m月%d日")
 
+def extract_date_from_title(title):
+    return f"{m.group(1)}{m.group(2)}{m.group(3)}" if (m:=re.search(r'(\d{4})年(\d{2})月(\d{2})日', title)) else get_today_str()
 
-
-def get_latest_article_link(html):
-    """从首页HTML中提取最新文章的链接"""
-    if not html:
+def fetch(url):
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+    try:
+        resp = requests.get(url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        resp.encoding = resp.apparent_encoding or 'utf-8'
+        time.sleep(1)
+        return resp.text
+    except Exception as e:
+        print(f"错误：{url} 失败 - {e}")
         return None
+
+def main():
+    print("开始获取玉豆节点...")
     
-    soup = BeautifulSoup(html, 'html.parser')
+    home_html = fetch(BASE_URL)
+    if not home_html:
+        return
     
-    # 先尝试查找带有日期的文章链接
+    # 使用BeautifulSoup查找最新文章链接
+    soup = BeautifulSoup(home_html, 'html.parser')
     current_date = get_current_date_str()
     yesterday_date = get_yesterday_date_str()
     
     # 查找所有文章链接
     all_links = soup.find_all('a', href=True)
+    article_url = None
+    article_title = None
     
     # 优先查找今日文章
     for link in all_links:
         link_text = link.get_text().strip()
         if current_date in link_text and "免费精选节点" in link_text:
-            href = link['href']
-            if not href.startswith('http'):
-                href = "https://www.yudou789.top" + href
-            return href, link_text
+            article_url = link['href']
+            article_title = link_text
+            break
     
     # 如果没有今日文章，查找昨日文章
-    for link in all_links:
-        link_text = link.get_text().strip()
-        if yesterday_date in link_text and "免费精选节点" in link_text:
-            href = link['href']
-            if not href.startswith('http'):
-                href = "https://www.yudou789.top" + href
-            return href, link_text
+    if not article_url:
+        for link in all_links:
+            link_text = link.get_text().strip()
+            if yesterday_date in link_text and "免费精选节点" in link_text:
+                article_url = link['href']
+                article_title = link_text
+                break
     
     # 如果没找到特定日期的文章，尝试获取第一个文章链接
-    for link in all_links:
-        link_text = link.get_text().strip()
-        if "免费精选节点" in link_text:
-            href = link['href']
-            if not href.startswith('http'):
-                href = "https://www.yudou789.top" + href
-            return href, link_text
+    if not article_url:
+        for link in all_links:
+            link_text = link.get_text().strip()
+            if "免费精选节点" in link_text:
+                article_url = link['href']
+                article_title = link_text
+                break
     
-    return None, None
-
-def find_encrypted_txt_link(article_html):
-    """从文章页面（第一层DOM）中查找加密txt链接"""
+    if not article_url:
+        print("错误：无法找到最新文章")
+        return
+    
+    # 补全URL
+    if not article_url.startswith('http'):
+        article_url = BASE_URL + article_url
+    
+    print(f"找到最新文章: {article_title}")
+    
+    article_html = fetch(article_url)
     if not article_html:
-        return None
+        return
     
+    # 提取密码
     soup = BeautifulSoup(article_html, 'html.parser')
+    password = None
     
+    # 方法1：从 data-secret 属性提取密码（使用JS解码器的方法）
+    wrapper = soup.find(class_='cl-noindent-wrapper')
+    
+    if wrapper:
+        secret = wrapper.get('data-secret')
+        if secret:
+            try:
+                # 尝试base64解码
+                password = base64.b64decode(secret).decode('utf-8')
+                print(f"从data-secret解码得到密码：{password}")
+            except:
+                # 尝试常用密码
+                common_passwords = [
+                    "0000", "0123", "1111", "1112", "1122", "1133", "1144", "1155", "1166", "1177", 
+                    "1188", "1199", "1222", "1234", "2211", "2222", "2233", "2244", "2255", "2266", 
+                    "2277", "2288", "2299", "2333", "2345", "3311", "3322", "3333", "3344", "3355", 
+                    "3366", "3377", "3388", "3399", "3444", "3456", "4321", "4411", "4422", "4433", 
+                    "4444", "4455", "4466", "4477", "4488", "4499", "4555", "4567", "5511", "5522", 
+                    "5533", "5544", "5555", "5566", "5577", "5588", "5599", "5666", "5678", "6611", 
+                    "6622", "6633", "6644", "6655", "6666", "6677", "6688", "6699", "6777", "6789", 
+                    "7711", "7722", "7733", "7744", "7755", "7766", "7777", "7788", "7799", "7888", 
+                    "8811", "8822", "8833", "8844", "8855", "8866", "8877", "8888", "8899", "8999", 
+                    "9900", "9911", "9922", "9933", "9944", "9955", "9966", "9977", "9988", "9999"
+                ]
+                for pwd in common_passwords:
+                    try:
+                        if base64.b64encode(pwd.encode('utf-8')).decode('utf-8') == secret:
+                            password = pwd
+                            print(f"常用密码匹配成功：{password}")
+                            break
+                    except:
+                        pass
+    
+    # 方法2：从文本中提取密码（备用方法）
+    if not password:
+        all_text = soup.get_text()
+        password_patterns = [
+            r'密码[:：]\s*(\d{4})',
+            r'今日密码[:：]\s*(\d{4})',
+            r'提取码[:：]\s*(\d{4})',
+            r'key[:：]\s*(\d{4})',
+            r'KEY[:：]\s*(\d{4})',
+            r'密码\s*=\s*(\d{4})',
+            r'提取码\s*=\s*(\d{4})'
+        ]
+        for pattern in password_patterns:
+            matches = re.findall(pattern, all_text)
+            if matches:
+                password = matches[0]
+                print(f"从文本提取得到密码：{password}")
+                break
+    
+    if not password:
+        print("未在文章中找到密码")
+    
+    # 查找节点链接
+    txt_url = None
     # 方法1：优先查找.txt文件链接
     all_links = soup.find_all('a', href=True)
     txt_links = []
-    
     for link in all_links:
         href = link['href']
-        text = link.get_text().strip().lower()
-        
-        # 跳过分类链接、首页链接和HTML页面链接
-        if 'category' in href or href == '/' or href == '#' or href.endswith('.html'):
-            continue
-        
-        # 只接受.txt文件链接
         if '.txt' in href:
             if not href.startswith('http'):
-                href = "https://www.yudou789.top" + href
+                href = BASE_URL + href
             txt_links.append(href)
-    
     # 方法2：在页面所有文本中搜索.txt链接
     if not txt_links:
         pattern = r'https?://[^\s"\']+\.txt'
         txt_links = re.findall(pattern, article_html)
-    
-    # 方法3：在HTML中搜索可能的.txt下载链接
-    if not txt_links:
-        pattern = r'<a[^>]+href=["\']([^"\']*\.txt[^"\']*)["\'][^>]*>'
-        matches = re.findall(pattern, article_html, re.IGNORECASE)
-        for match in matches:
-            href = match
-            if not href.startswith('http'):
-                href = "https://www.yudou789.top" + href
-            txt_links.append(href)
-    
     # 去重并返回第一个链接
     if txt_links:
-        # 去重
         unique_links = list(dict.fromkeys(txt_links))
-        return unique_links[0]
+        txt_url = unique_links[0]
     
-    return None
-
-def extract_encrypted_content(txt_html):
-    """从加密页面中提取加密内容"""
-    if not txt_html:
-        return None
+    if not txt_url:
+        print("错误：无法找到节点链接")
+        return
+    print(f"找到节点链接: {txt_url}")
     
-    # 尝试直接获取文本内容（如果是纯文本文件）
-    if '<' not in txt_html[:100]:  # 可能是纯文本
-        return txt_html.strip()
+    print("获取节点内容...")
+    nodes_content = fetch(txt_url)
+    if not nodes_content:
+        return
+    print("节点内容获取成功")
     
-    # 否则是HTML页面，需要提取加密内容
-    soup = BeautifulSoup(txt_html, 'html.parser')
-    
-    # 方法1：查找<textarea>标签
-    textarea = soup.find('textarea')
-    if textarea:
-        content = textarea.get_text().strip()
-        if content:
-            print("从textarea标签提取内容")
-            return content
-    
-    # 方法2：查找<pre>标签
-    pre = soup.find('pre')
-    if pre:
-        content = pre.get_text().strip()
-        if content:
-            print("从pre标签提取内容")
-            return content
-    
-    # 方法3：查找所有文本并尝试识别加密内容
-    all_text = soup.get_text()
-    lines = all_text.split('\n')
-    
-    for line in lines:
-        line = line.strip()
-        if len(line) > 50 and not any(word in line.lower() for word in ['html', 'http', '<', '>', 'script']):
-            print("从文本中提取可能的加密内容")
-            return line
-    
-    print("无法提取加密内容")
-    return None
-
-
-
-def extract_password_from_article(article_html):
-    """从文章页面中提取密码"""
-    if not article_html:
-        return None
-    
-    soup = BeautifulSoup(article_html, 'html.parser')
-    
-    # 方法1：查找包含"密码"的文本
-    all_text = soup.get_text()
-    
-    # 正则表达式匹配密码：通常是4位数字
-    password_patterns = [
-        r'密码[:：]\s*(\d{4})',
-        r'今日密码[:：]\s*(\d{4})',
-        r'提取码[:：]\s*(\d{4})',
-        r'key[:：]\s*(\d{4})',
-        r'KEY[:：]\s*(\d{4})',
-        r'密码\s*=\s*(\d{4})',
-        r'提取码\s*=\s*(\d{4})'
-    ]
-    
-    for pattern in password_patterns:
-        matches = re.findall(pattern, all_text)
-        if matches:
-            print(f"从文本中找到密码: {matches[0]}")
-            return matches[0]
-    
-    # 方法2：查找包含密码的HTML元素
-    for tag in soup.find_all(['div', 'span', 'p', 'strong']):
-        text = tag.get_text().strip()
-        if '密码' in text or '提取码' in text or 'KEY' in text or 'key' in text:
-            matches = re.findall(r'\d{4}', text)
-            if matches:
-                print(f"从HTML元素中找到密码: {matches[0]}")
-                return matches[0]
-    
-    # 方法3：如果以上都失败，返回空
-    return None
-
-
-def validate_filename(filename):
-    """验证文件名安全性，防止路径遍历攻击"""
-    # 只允许文件名包含字母、数字、下划线和连字符
-    if not re.match(r'^[a-zA-Z0-9-_]+\.\w+$', filename):
-        return False
-    # 确保文件名不包含路径分隔符
-    if '/' in filename or '\\' in filename or '..' in filename:
-        return False
-    return True
-
-def save_to_file(content, filename):
-    """将内容保存到文件"""
+    # 使用extract_date_from_title函数获取日期
+    date_str = extract_date_from_title(article_title)
+    filename = f"nodes_{date_str}.txt"
     try:
-        # 验证文件名安全性
-        if not validate_filename(filename):
-            print(f"  错误：文件名 {filename} 不安全")
-            return False
-        # 拼接脚本目录和文件名，确保文件保存在脚本所在目录
-        file_path = os.path.join(SCRIPT_DIR, filename)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-        print(f"  成功！文件已保存为: {file_path}")
-        return True
+        with open(os.path.join(SCRIPT_DIR, filename), 'w', encoding='utf-8') as f:
+            f.write(nodes_content)
+        print(f"节点已保存到：{filename}")
     except Exception as e:
-        file_path = os.path.join(SCRIPT_DIR, filename)
-        print(f"  错误：无法保存文件 {file_path}。原因：{e}")
-        return False
-
-
-def extract_date_from_title(title):
-    """从文章标题中提取日期，格式：YYYYMMDD"""
-    # 匹配标题中的日期格式：2026年01月06日
-    pattern = r'(\d{4})年(\d{2})月(\d{2})日'
-    match = re.search(pattern, title)
-    if match:
-        year = match.group(1)
-        month = match.group(2)
-        day = match.group(3)
-        return f"{year}{month}{day}"
-    # 如果没找到，返回当前日期
-    return get_today_str()
-
-
-def main():
-    base_url = "https://www.yudou789.top/"
+        print(f"错误：保存失败 - {e}")
     
-    print(f"开始爬取玉豆分享最新节点文件...")
-    
-    try:
-        # 步骤1：获取网站首页
-        home_html = fetch_html(base_url)
-        if not home_html:
-            print("错误：无法访问目标网站")
-            sys.exit(1)
-        
-        # 步骤2：查找最新文章链接
-        article_url, article_title = get_latest_article_link(home_html)
-        if not article_url:
-            print("错误：无法找到最新文章链接")
-            sys.exit(1)
-        
-        print(f"找到最新文章: {article_title}")
-        
-        # 从文章标题中提取日期
-        article_date = extract_date_from_title(article_title)
-        print(f"文章日期：{article_date}")
-        
-        # 步骤3：访问文章页面
-        article_html = fetch_html(article_url)
-        if not article_html:
-            print("错误：无法访问文章页面")
-            sys.exit(1)
-        
-        # 步骤4：从文章页面提取密码
-        password = extract_password_from_article(article_html)
-        if password:
-            print(f"今日密码：{password}")
-        else:
-            print("未在文章中找到密码")
-        
-        # 步骤5：查找加密文件链接
-        txt_url = find_encrypted_txt_link(article_html)
-        
-        if not txt_url:
-            print("错误：无法找到加密文件链接")
-            sys.exit(1)
-        
-        print(f"找到节点文件链接: {txt_url}")
-        
-        # 步骤6：直接访问并保存txt文件内容
-        txt_content = fetch_html(txt_url)
-        if not txt_content:
-            print("错误：无法访问节点文件")
-            sys.exit(1)
-        
-        # 步骤7：提取加密内容
-        extracted_content = extract_encrypted_content(txt_content)
-        if extracted_content:
-            # 使用提取的内容
-            txt_content = extracted_content
-        
-        # 使用文章日期命名文件
-        filename = f"nodes_{article_date}.txt"
-        # 验证文件名安全性
-        if validate_filename(filename):
-            file_path = os.path.join(SCRIPT_DIR, filename)
-            try:
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(txt_content)
-                print(f"文件已保存到 {file_path}")
-            except Exception as e:
-                print(f"错误：无法保存文件 {file_path}。原因：{e}")
-        else:
-            print(f"错误：文件名 {filename} 不安全")
-        
-        # 删除JS解码器
-        js_file_path = os.path.join(SCRIPT_DIR, "yudou_decode.js")
-        if os.path.exists(js_file_path):
-            try:
-                os.remove(js_file_path)
-                print(f"JS解码器已删除：{js_file_path}")
-            except Exception as e:
-                print(f"错误：无法删除JS解码器。原因：{e}")
-        
-        # 显示最终结果
-        print(f"\n爬取完成！")
-        if password:
-            print(f"文章日期：{article_date}")
-            print(f"最终密码：{password}")
-        print(f"节点文件：nodes_{article_date}.txt")
-    except Exception as e:
-        print(f"❌ 程序执行过程中发生错误：{e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+    print("\n操作完成！")
 
 if __name__ == "__main__":
     main()
