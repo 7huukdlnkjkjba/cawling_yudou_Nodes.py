@@ -1,7 +1,7 @@
 
 # yudou-node-crawler —— 玉豆节点自动化获取工具
 
-> 高效、鲁棒、自适应的免费节点订阅采集器
+> 高效、鲁棒、自适应的某豆加密免费节点订阅采集器
 
 ## 概述
 
@@ -90,4 +90,8 @@
                 ▼
            下并保存
 ```
-一键使用
+### 一键使用
+```bash
+python cawling_yudou_Nodes.py
+```
+cawling_yudou_Nodes.go版已编译yudou.exe，可直接点击
