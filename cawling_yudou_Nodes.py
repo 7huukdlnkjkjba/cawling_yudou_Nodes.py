@@ -1,8 +1,11 @@
-import requests, re, os, time, base64
+import requests, re, os, time, base64, sys
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    SCRIPT_DIR = os.path.dirname(sys.executable)
+else:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_URL = "https://www.yudou789.top/"
 
 def get_today_str():
@@ -16,13 +19,6 @@ def get_yesterday_date_str():
 
 def extract_date_from_title(title):
     return f"{m.group(1)}{m.group(2)}{m.group(3)}" if (m:=re.search(r'(\d{4})年(\d{2})月(\d{2})日', title)) else get_today_str()
-
-def get_article_url_by_date(target_date):
-    base_date = datetime(2026, 5, 10).date()
-    base_id = 865
-    delta_days = (target_date - base_date).days
-    article_id = base_id + delta_days * 5
-    return f"https://www.yudou789.top/{article_id}.html"
 
 def fetch(url):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
@@ -41,78 +37,55 @@ def main():
 
     article_url = None
     article_title = None
+    article_html = None
 
-    # 方法1：优先使用日期计算URL（更稳定高效）
-    today = datetime.now().date()
-    calculated_url = get_article_url_by_date(today)
-    print(f"尝试使用日期计算URL: {calculated_url}")
-    
-    # 验证URL是否有效
-    article_html = fetch(calculated_url)
-    if article_html and "免费精选节点" in article_html:
-        article_url = calculated_url
-        article_title = f"{today.strftime('%Y年%m月%d日')} 免费精选节点"
-        print(f"日期计算URL有效: {article_title}")
-    
-    # 方法2：如果日期计算失败，尝试昨日的文章
+    # 从首页解析最新文章（唯一方法）
+    print("从首页解析最新文章...")
+    home_html = fetch(BASE_URL)
+    if not home_html:
+        return
+
+    soup = BeautifulSoup(home_html, 'html.parser')
+    current_date = get_current_date_str()
+    yesterday_date = get_yesterday_date_str()
+
+    all_links = soup.find_all('a', href=True)
+
+    # 优先查找今日文章
+    for link in all_links:
+        link_text = link.get_text().strip()
+        if current_date in link_text and "免费精选节点" in link_text:
+            article_url = link['href']
+            article_title = link_text
+            break
+
+    # 如果没有今日文章，查找昨日文章
     if not article_url:
-        yesterday = today - timedelta(days=1)
-        calculated_url = get_article_url_by_date(yesterday)
-        print(f"尝试昨日日期计算URL: {calculated_url}")
-        article_html = fetch(calculated_url)
-        if article_html and "免费精选节点" in article_html:
-            article_url = calculated_url
-            article_title = f"{yesterday.strftime('%Y年%m月%d日')} 免费精选节点"
-            print(f"昨日日期计算URL有效: {article_title}")
-
-    # 方法3：备用方案 - 从首页解析（原有方法）
-    if not article_url:
-        print("日期计算方法失败，尝试从首页解析...")
-        home_html = fetch(BASE_URL)
-        if not home_html:
-            return
-
-        soup = BeautifulSoup(home_html, 'html.parser')
-        current_date = get_current_date_str()
-        yesterday_date = get_yesterday_date_str()
-
-        all_links = soup.find_all('a', href=True)
-
-        # 优先查找今日文章
         for link in all_links:
             link_text = link.get_text().strip()
-            if current_date in link_text and "免费精选节点" in link_text:
+            if yesterday_date in link_text and "免费精选节点" in link_text:
                 article_url = link['href']
                 article_title = link_text
                 break
 
-        # 如果没有今日文章，查找昨日文章
-        if not article_url:
-            for link in all_links:
-                link_text = link.get_text().strip()
-                if yesterday_date in link_text and "免费精选节点" in link_text:
-                    article_url = link['href']
-                    article_title = link_text
-                    break
+    # 如果没找到特定日期的文章，尝试获取第一个文章链接
+    if not article_url:
+        for link in all_links:
+            link_text = link.get_text().strip()
+            if "免费精选节点" in link_text:
+                article_url = link['href']
+                article_title = link_text
+                break
 
-        # 如果没找到特定日期的文章，尝试获取第一个文章链接
-        if not article_url:
-            for link in all_links:
-                link_text = link.get_text().strip()
-                if "免费精选节点" in link_text:
-                    article_url = link['href']
-                    article_title = link_text
-                    break
+    if not article_url:
+        print("错误：无法找到最新文章")
+        return
 
-        if not article_url:
-            print("错误：无法找到最新文章")
-            return
+    # 补全URL
+    if not article_url.startswith('http'):
+        article_url = BASE_URL + article_url
 
-        # 补全URL
-        if not article_url.startswith('http'):
-            article_url = BASE_URL + article_url
-
-        print(f"从首页找到最新文章: {article_title}")
+    print(f"从首页找到最新文章: {article_title}")
 
     # 获取文章内容（如果尚未获取）
     if not article_html:
@@ -133,7 +106,7 @@ def main():
             try:
                 # 尝试base64解码
                 password = base64.b64decode(secret).decode('utf-8')
-                print(f"从data-secret解码得到密码：{password}")
+                print(f"解码得到密码：{password}")
             except:
                 # 尝试常用密码
                 common_passwords = [
